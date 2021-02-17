@@ -16,7 +16,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum GlobPattern {
     MatchAny,
     Multipart(Vec<Multipart>),
@@ -27,10 +27,11 @@ pub enum GlobPattern {
     MatchFull(String)
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Multipart {
     ExactStart(String),
     AnyUntil(String),
+    AnyUntilExactEnd(String),
     AnyEnd,
 }
 
@@ -83,7 +84,7 @@ pub fn build_glob_pattern(pattern: &str) -> Result<GlobPattern,()> {
         if pos == end {
             parts.push(Multipart::AnyEnd);
         } else if pos < end {
-            parts.push(Multipart::AnyUntil(pattern[pos..].to_string()));
+            parts.push(Multipart::AnyUntilExactEnd(pattern[pos..].to_string()));
         }
 
         // validation (TODO: move validation earlier, rewrite the fn even)
@@ -103,86 +104,14 @@ pub fn build_glob_pattern(pattern: &str) -> Result<GlobPattern,()> {
 // TODO: create an even slightly usable error
 pub fn glob_match(pattern: &str, value: &str) -> Result<bool, ()> {
     // TODO: move shared parts to a function, rewrite cleaner
+    let pattern = build_glob_pattern(&pattern.to_uppercase())?;
+    return Ok(glob_match_prebuilt(&pattern, &value.to_uppercase()));
+}
+
+pub fn glob_match_case_sensitive(pattern: &str, value: &str) -> Result<bool, ()> {
+    // TODO: move shared parts to a function, rewrite cleaner
     let pattern = build_glob_pattern(pattern)?;
-    match pattern {
-        GlobPattern::MatchAny => Ok(true),
-        GlobPattern::MatchEnd(end) => Ok(value.ends_with(end.as_str())),
-        GlobPattern::MatchStart(start) => Ok(value.starts_with(start.as_str())),
-        GlobPattern::MatchBothEnds(start,end) => Ok(value.starts_with(start.as_str()) && value.ends_with(end.as_str())),
-        GlobPattern::MatchFull(full) => Ok(value == full),
-        GlobPattern::Multipart(mut multi) => {
-            if multi.is_empty() {
-                return Err(()); // return empty pattern error
-            }
-
-            let mut current_pos = 0;
-            let mut current = multi.get(current_pos).unwrap();
-            let mut ch_iter = value.chars();
-            'outer:
-            loop {
-                let mut ch = ch_iter.next();
-                if ch.is_none() {
-                    break;
-                }
-                match &current {
-                    Multipart::ExactStart(start) => {
-                        for ch_st in start.chars() {
-                            if ch.unwrap() != ch_st {
-                                return Ok(false);
-                            }
-                            ch = ch_iter.next();
-                        }
-                        current_pos += 1;
-                        if current_pos > multi.len() - 1 {
-                            return Ok(true);
-                        }
-                        current = multi.get(current_pos).unwrap();
-                    },
-                    Multipart::AnyUntil(until) => {
-                        let mut ch_un_iter = until.chars();
-                        let mut ch_un = ch_un_iter.next();
-
-                        if ch.unwrap() != ch_un.unwrap() { // not yet at a possible start of next part
-                            loop {
-                                ch = ch_iter.next();
-                                if ch.is_none() {
-                                    return Ok(false); // out of chars before the first char of the part was found, couldn't possibly match (please don't be wrong about this)
-                                }
-                                if ch.unwrap() == ch_un.unwrap() {
-                                    break; // found possible start of part
-                                }
-                            }
-                        }
-
-                        loop {
-                            ch_un = ch_un_iter.next();
-                            if ch_un.is_none() {
-                                break; // we matched everything
-                            }
-
-                            ch = ch_iter.next();
-                            if ch.is_none() {
-                                return Ok(false); // ended before we could match everything
-                            }
-
-                            if ch.unwrap() != ch_un.unwrap() {
-                                continue 'outer; // continue outer loop and try finding the start of the part again
-                            }
-                        }
-                        current_pos += 1;
-                        if current_pos > multi.len() - 1 {
-                            return Ok(true);
-                        }
-                        current = multi.get(current_pos).unwrap();
-                    },
-                    Multipart::AnyEnd => {
-                        return Ok(true);
-                    },
-                }
-            }
-            return Ok(false);
-        }
-    }
+    return Ok(glob_match_prebuilt(&pattern, value));
 }
 
 pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
@@ -203,6 +132,10 @@ pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
             'outer:
             loop {
                 let mut ch = ch_iter.next();
+                if matches!(current, Multipart::AnyEnd) {
+                    return true;
+                }
+
                 if ch.is_none() {
                     break;
                 }
@@ -214,6 +147,10 @@ pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
                             }
                             ch = ch_iter.next();
                         }
+
+                        #[cfg(test)]
+                        println!("Matched exact start '{}'", start);
+
                         current_pos += 1;
                         if current_pos > multi.len() - 1 {
                             return true;
@@ -251,13 +188,62 @@ pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
                                 continue 'outer; // continue outer loop and try finding the start of the part again
                             }
                         }
+
+                        #[cfg(test)]
+                        println!("Matched any until '{}'", until);
+
                         current_pos += 1;
                         if current_pos > multi.len() - 1 {
                             return true;
                         }
                         current = multi.get(current_pos).unwrap();
                     },
+                    Multipart::AnyUntilExactEnd(until) => {
+                        loop { // TODO: maybe reduce the amount of loops :-)
+                            let mut ch_un_iter = until.chars();
+                            let mut ch_un = ch_un_iter.next();
+
+                            if ch.unwrap() != ch_un.unwrap() { // not yet at a possible start of next part
+                                loop {
+                                    ch = ch_iter.next();
+                                    if ch.is_none() {
+                                        return false; // out of chars before the first char of the part was found, couldn't possibly match (please don't be wrong about this)
+                                    }
+                                    if ch.unwrap() == ch_un.unwrap() {
+                                        break; // found possible start of part
+                                    }
+                                }
+                            }
+
+                            loop {
+                                ch_un = ch_un_iter.next();
+                                if ch_un.is_none() {
+                                    break; // we matched everything, break out and check if we're at the end
+                                }
+
+                                ch = ch_iter.next();
+                                if ch.is_none() {
+                                    return false; // ended before we could match everything
+                                }
+
+                                if ch.unwrap() != ch_un.unwrap() {
+                                    break; // continue outer loop and try finding the start of the part again
+                                } //^
+                            } //    |
+                            //      '--------------.
+                            ch = ch_iter.next(); //|
+                            //                     '--------------------------------<
+                            if ch.is_none() { // <- this should not be true if this ^ break happens
+                                              // unless I was a little too tired when reasoning about it
+                                #[cfg(test)]
+                                println!("Matched any until exact end '{}'", until);
+                                return true;
+                            }
+                        }
+                    },
                     Multipart::AnyEnd => {
+                        #[cfg(test)]
+                        println!("Matched any end");
                         return true;
                     },
                 }
@@ -321,7 +307,7 @@ mod tests {
         };
         assert!(matches!(&part[0], crate::Multipart::ExactStart(v) if v == "val"));
         assert!(matches!(&part[1], crate::Multipart::AnyUntil(v) if v == "whale"));
-        assert!(matches!(&part[2], crate::Multipart::AnyUntil(v) if v == "value"));
+        assert!(matches!(&part[2], crate::Multipart::AnyUntilExactEnd(v) if v == "value"));
     }
 
     #[test]
@@ -345,7 +331,7 @@ mod tests {
         };
         assert!(matches!(&part[0], crate::Multipart::AnyUntil(v) if v == "val"));
         assert!(matches!(&part[1], crate::Multipart::AnyUntil(v) if v == "brawl"));
-        assert!(matches!(&part[2], crate::Multipart::AnyUntil(v) if v == "crawl"));
+        assert!(matches!(&part[2], crate::Multipart::AnyUntilExactEnd(v) if v == "crawl"));
     }
 
     #[test]
@@ -361,6 +347,44 @@ mod tests {
 
     #[test]
     fn glob_match_multipart() {
-        assert!(crate::glob_match("*.*.test.cs", "startling.magic.test.cs").unwrap());
+        assert!(crate::glob_match("*.*.Test.cs", "startling.magic.teSt.cs").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_case_sensitive() {
+        assert!(!crate::glob_match_case_sensitive("*.*.Test.cs", "startling.magic.teSt.cs").unwrap());
+        assert!(crate::glob_match_case_sensitive("*.*.Test.cs", "startling.magic.Test.cs").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_multiple_dots() {
+        // TODO: not sure if asterisk should match "0 or more" or "1 or more"
+        // could have * for 0 or more, + for 1 or more, ? for exactly 1
+        assert!(crate::glob_match("*.*~", "test.dots.~multiple.~").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_multiple_dots_chars_before_end() {
+        assert!(crate::glob_match("*.*~", "test.dots.~multiple.un~").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_multiple_dots_chars_before_end_pattern_ends_with_un_tilde() {
+        assert!(crate::glob_match("*.un~", "test.dots.un~.un~").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_exact_end_only_last_char_differs() {
+        assert!(!crate::glob_match("*.un~", "test.dots.un~.un").unwrap());
+    }
+
+    #[test]
+    fn glob_match_multipart_exact_end_only_last_char_differs_no_previous_matches() {
+        assert!(!crate::glob_match("*.Un~", "test.un").unwrap());
+    }
+
+    #[test]
+    fn dadada() {
+        assert!(crate::glob_match("da*da*da*", "daaadabadmanda").unwrap());
     }
 }
