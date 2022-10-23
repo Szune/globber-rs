@@ -33,6 +33,13 @@ pub struct GlobList {
 }
 
 impl GlobList {
+    pub fn empty() -> GlobList {
+        GlobList {
+            patterns: Vec::new(),
+            case_sensitive: true,
+        }
+    }
+
     pub fn build(patterns: &[String]) -> Result<GlobList, ()> {
         let patterns : Result<Vec<GlobPattern>,()> = patterns
             .iter()
@@ -300,6 +307,16 @@ pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::GlobList;
+
+    #[test]
+    fn empty_glob_list_never_matches() {
+        let glob_list = GlobList::empty();
+        assert!(!glob_list.is_match(""));
+        assert!(!glob_list.is_match("hello nice world"));
+        assert!(!glob_list.is_match("world, you are nice, hello"));
+        assert!(!glob_list.is_match("HELLO nice world"));
+        assert!(!glob_list.is_match("world, you are nice, hELLO"));
+    }
 
     #[test]
     fn build_glob_list() {
