@@ -27,6 +27,45 @@ pub enum GlobPattern {
     MatchFull(String)
 }
 
+pub struct GlobList {
+    patterns: Vec<GlobPattern>,
+    case_sensitive: bool
+}
+
+impl GlobList {
+    pub fn build(patterns: &[String]) -> Result<GlobList, ()> {
+        let patterns : Result<Vec<GlobPattern>,()> = patterns
+            .iter()
+            .map(|p| build_glob_pattern(p))
+            .collect();
+        patterns.map(|ps| GlobList {
+            patterns: ps,
+            case_sensitive: true
+        })
+    }
+
+    pub fn build_case_insensitive(patterns: &[String]) -> Result<GlobList, ()> {
+        let patterns : Result<Vec<GlobPattern>,()> = patterns
+            .iter()
+            .map(|p| build_glob_pattern(&p.to_uppercase()))
+            .collect();
+        patterns.map(|ps| GlobList {
+            patterns: ps,
+            case_sensitive: false
+        })
+    }
+
+    pub fn is_match(&self, value: &str) -> bool {
+        if self.case_sensitive {
+            self.patterns.iter().any(|p| glob_match_prebuilt(p, value))
+        } else {
+            let value = value.to_uppercase();
+            self.patterns.iter().any(|p| glob_match_prebuilt(p, &value))
+        }
+    }
+}
+
+
 #[derive(Debug,Clone)]
 pub enum Multipart {
     ExactStart(String),
@@ -112,6 +151,10 @@ pub fn glob_match_case_sensitive(pattern: &str, value: &str) -> Result<bool, ()>
     // TODO: move shared parts to a function, rewrite cleaner
     let pattern = build_glob_pattern(pattern)?;
     return Ok(glob_match_prebuilt(&pattern, value));
+}
+
+pub fn glob_match_any_prebuilt(patterns: &[GlobPattern], value: &str) -> bool {
+    patterns.iter().any(|p| glob_match_prebuilt(p, value))
 }
 
 pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
@@ -256,6 +299,33 @@ pub fn glob_match_prebuilt(pattern: &GlobPattern, value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::GlobList;
+
+    #[test]
+    fn build_glob_list() {
+        let patterns : Vec<String> = vec!["hello*world", "world*hello"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let glob_list = GlobList::build(&patterns).unwrap();
+        assert!(glob_list.is_match("hello nice world"));
+        assert!(glob_list.is_match("world, you are nice, hello"));
+        assert!(!glob_list.is_match("HELLO nice world"));
+        assert!(!glob_list.is_match("world, you are nice, hELLO"));
+    }
+
+    #[test]
+    fn build_case_insensitive_glob_list() {
+        let patterns : Vec<String> = vec!["hello*world", "world*hello"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let glob_list = GlobList::build_case_insensitive(&patterns).unwrap();
+        assert!(glob_list.is_match("hello nice world"));
+        assert!(glob_list.is_match("world, you are nice, hello"));
+        assert!(glob_list.is_match("HELLO nice world"));
+        assert!(glob_list.is_match("world, YOU are nice, hello"));
+    }
 
     #[test]
     fn build_glob_pattern_match_any() {
