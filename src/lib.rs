@@ -156,24 +156,12 @@ impl GlobList {
         }
     }
 
-    // TODO: do something more reasonable
-    /// Error if self.case_sensitive is not equal for all GlobLists
     pub fn combine(glob_lists: Vec<GlobList>) -> GlobList {
         glob_lists.into_iter().fold(GlobList::new(), |mut acc, item| {
             acc.ignore_case_patterns.extend(item.ignore_case_patterns);
             acc.case_sensitive_patterns.extend(item.case_sensitive_patterns);
             acc
         })
-
-        //let patterns =
-        //    glob_lists
-        //        .into_iter()
-        //        .flat_map(|p|p.patterns)
-        //        .collect::<Vec<GlobItem>>();
-        //Ok(GlobList {
-        //    patterns,
-        //    all_ignore_case,
-        //})
     }
 }
 
